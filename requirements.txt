@@ -1,4 +1,5 @@
 langchain==0.3.27
+langchain-community==0.3.29  # Explicitly pin to match your env
 pypdf==6.0.0
 sentence-transformers==5.1.0
 faiss-cpu==1.12.0

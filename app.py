@@ -9,7 +9,7 @@ st.markdown("""
 <style>
     /* General styles */
     .stApp {
-        background-color: #e5e7eb; /* Soft gray background */
+        background-color: #e5e7eb;
         font-family: 'Inter', sans-serif;
         padding: 20px;
     }
@@ -44,16 +44,16 @@ st.markdown("""
         box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
         border: 1px solid #d1d5db;
         animation: fadeIn 0.3s ease-in;
-        color: #1f2937; /* Dark text for readability */
+        color: #1f2937;
     }
     /* User message */
     .stChatMessage[data-testid="chat-message-container-user"] {
-        background-color: #93c5fd; /* Soft blue for user */
+        background-color: #93c5fd;
         border-left: 4px solid #1e40af;
     }
     /* Assistant message */
     .stChatMessage[data-testid="chat-message-container-assistant"] {
-        background-color: #d1d5db; /* Light gray for assistant */
+        background-color: #d1d5db;
         border-left: 4px solid #4b5563;
     }
     /* Chat input style */
@@ -77,7 +77,7 @@ st.markdown("""
     }
     /* Ensure text contrast */
     .stMarkdown p {
-        color: #1f2937 !important; /* Force dark text */
+        color: #1f2937 !important;
     }
 </style>
 """, unsafe_allow_html=True)
@@ -109,12 +109,19 @@ if prompt := st.chat_input("Ask something about the HR policy..."):
             try:
                 # Send the user's question to the backend API
                 response = requests.post("http://127.0.0.1:8000/query",
-                                         json={"question": prompt})
-                response.raise_for_status()  # Raise an error for bad status codes
+                                        json={"question": prompt})
+                response.raise_for_status()
                 answer = response.json().get("answer", "Sorry, I couldn't get an answer.")
+                sources = response.json().get("sources", [])
             except requests.exceptions.RequestException as e:
                 answer = f"An error occurred: {e}"
+                sources = []
 
             st.markdown(answer)
+            if sources:
+                with st.expander("View Sources"):
+                    for i, src in enumerate(sources, 1):
+                        st.write(f"**Source {i}: Page {src['page']}**")
+                        st.write(src["content"])
     # Add assistant response to chat history
     st.session_state.messages.append({"role": "assistant", "content": answer})

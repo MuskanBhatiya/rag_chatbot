@@ -1,8 +1,9 @@
 # backend.py
 from fastapi import FastAPI
-from fastapi.staticfiles import StaticFiles  # For serving static files (favicon)
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
-from core import get_qa_chain  # Import our main logic
+from core import get_qa_chain
+from functools import lru_cache
 
 # Initialize the FastAPI app
 app = FastAPI(
@@ -18,17 +19,28 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 class Query(BaseModel):
     question: str
 
-# Load the RAG chain once when the server starts
+# Load the RAG chain once when the server starts with caching
 qa_chain = get_qa_chain()
+
+@lru_cache(maxsize=50)
+def cached_invoke(query_str):
+    return qa_chain.invoke({"query": query_str})
 
 @app.post("/query")
 def ask_question(query: Query):
     """
     This endpoint receives a question, processes it through the RAG chain,
-    and returns the generated answer.
+    and returns the generated answer with sources.
     """
-    result = qa_chain.invoke({"query": query.question})
-    return {"answer": result["result"]}
+    result = cached_invoke(query.question)
+    sources = []
+    for doc in result.get("source_documents", []):
+        sources.append({
+            "content": doc.page_content[:200] + "..." if len(doc.page_content) > 200 else doc.page_content,
+            "source": doc.metadata.get('source', 'HR-Policy.pdf'),
+            "page": doc.metadata.get('page', 'N/A')
+        })
+    return {"answer": result["result"], "sources": sources}
 
 @app.get("/query")
 def query_get_error():

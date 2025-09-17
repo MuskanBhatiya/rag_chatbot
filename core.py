@@ -1,6 +1,7 @@
-# core.py
 import os
 import functools
+from rank_bm25 import BM25Okapi
+import numpy as np
 from dotenv import load_dotenv
 from langchain.chains import RetrievalQA
 from langchain.prompts import PromptTemplate
@@ -8,7 +9,7 @@ from langchain_groq import ChatGroq
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_community.vectorstores import FAISS
-from langchain_huggingface import HuggingFaceEmbeddings  # Updated import to fix deprecation
+from langchain_huggingface import HuggingFaceEmbeddings
 
 # Load environment variables from .env file
 load_dotenv()
@@ -28,7 +29,7 @@ def create_vector_db():
     texts = text_splitter.split_documents(documents)
     print(f"Split document into {len(texts)} chunks.")
 
-    embeddings = HuggingFaceEmbeddings(  # Updated to new package
+    embeddings = HuggingFaceEmbeddings(
         model_name='sentence-transformers/all-MiniLM-L6-v2',
         model_kwargs={'device': 'cpu'}
     )
@@ -52,30 +53,48 @@ PROMPT = PromptTemplate(
     template=prompt_template, input_variables=["context", "question"]
 )
 
+def rerank_docs(query, docs, k=2):
+    tokenized_corpus = [doc.page_content.lower().split() for doc in docs]
+    bm25 = BM25Okapi(tokenized_corpus)
+    tokenized_query = query.lower().split()
+    doc_scores = bm25.get_scores(tokenized_query)
+    top_indices = np.argsort(doc_scores)[::-1][:k]
+    return [docs[i] for i in top_indices]
+
 @functools.lru_cache(maxsize=None)
 def get_qa_chain():
     """
-    Initializes and returns a RetrievalQA chain.
+    Initializes and returns a RetrievalQA chain with re-ranking and caching.
     """
     print("Loading QA chain...")
     try:
-        embeddings = HuggingFaceEmbeddings(  # Updated to new package
+        embeddings = HuggingFaceEmbeddings(
             model_name="sentence-transformers/all-MiniLM-L6-v2",
             model_kwargs={'device': 'cpu'}
         )
         db = FAISS.load_local(DB_FAISS_PATH, embeddings, allow_dangerous_deserialization=True)
-        retriever = db.as_retriever(search_kwargs={'k': 2})
+        retriever = db.as_retriever(search_kwargs={'k': 4})
         llm = ChatGroq(
             temperature=0,
-            model_name="llama-3.3-70b-versatile"  # Updated to supported model
+            model_name="llama-3.3-70b-versatile"
         )
-        chain = RetrievalQA.from_chain_type(
+        base_chain = RetrievalQA.from_chain_type(
             llm=llm,
             chain_type="stuff",
             retriever=retriever,
             return_source_documents=True,
             chain_type_kwargs={"prompt": PROMPT}
         )
+        def custom_invoke(inputs):
+            query = inputs["query"]
+            docs = base_chain.retriever.get_relevant_documents(query)
+            reranked_docs = rerank_docs(query, docs)
+            result = base_chain.combine_documents_chain.run(
+                context='\n\n'.join([doc.page_content for doc in reranked_docs]),
+                question=query
+            )
+            return {"result": result, "source_documents": reranked_docs}
+        chain = type('CustomQA', (), {'invoke': custom_invoke})()
         print("QA chain loaded successfully.")
         return chain
     except Exception as e:
